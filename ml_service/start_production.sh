@@ -34,8 +34,9 @@ except ImportError as e:
 # Test database connection
 try:
     from app.models.database import engine
+    from sqlalchemy import text
     with engine.connect() as conn:
-        conn.execute(\"SELECT 1\")
+        conn.execute(text('SELECT 1'))
     print('✅ Database connection OK')
 except Exception as e:
     print(f'⚠️  Database connection warning: {e}')
@@ -44,14 +45,18 @@ except Exception as e:
 
 echo "🚀 Starting FastAPI server..."
 
-# Start the FastAPI application with production settings
-exec uvicorn app.main:app \
-    --host 0.0.0.0 \
-    --port ${PORT:-10000} \
+# Use Gunicorn with Uvicorn workers for production
+exec gunicorn app.main:app \
+    --bind 0.0.0.0:${PORT:-10000} \
     --workers 2 \
     --worker-class uvicorn.workers.UvicornWorker \
+    --worker-connections 1000 \
+    --max-requests 1000 \
+    --max-requests-jitter 50 \
+    --timeout 30 \
+    --keep-alive 5 \
     --log-level ${LOG_LEVEL:-info} \
-    --timeout-keep-alive 30 \
-    --access-log \
-    --no-use-colors \
-    --loop asyncio
+    --access-logfile - \
+    --error-logfile - \
+    --capture-output \
+    --enable-stdio-inheritance
