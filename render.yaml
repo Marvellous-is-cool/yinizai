@@ -4,16 +4,14 @@
 services:
   - type: web
     name: yinizai-ml-service
-    env: python
+    env: docker
     region: oregon # Choose: oregon, frankfurt, singapore
-    buildCommand: cd ml_service && bash build.sh
-    startCommand: cd ml_service && bash start_production.sh
-    plan: starter # Free tier
+    plan: starter # Free tier: free, Paid: starter ($7/mo)
     branch: main
     healthCheckPath: /health
     autoDeploy: true
 
-    # Environment variables (also set in Render dashboard)
+    # Environment variables (set these in Render dashboard with actual values)
     envVars:
       - key: ENVIRONMENT
         value: production
@@ -23,9 +21,14 @@ services:
         value: info
       - key: MIN_TRAINING_SAMPLES
         value: 10
-
-    # Resource limits
-    disk:
-      name: yinizai-ml-disk
-      size: 1
-      type: ssd
+      # Add these in Render dashboard:
+      # - key: DB_HOST
+      #   value: your-aiven-mysql-host
+      # - key: DB_USER  
+      #   value: avnadmin
+      # - key: DB_PASSWORD
+      #   value: your-aiven-password
+      # - key: DB_NAME
+      #   value: defaultdb
+      # - key: SECRET_KEY
+      #   value: your-secret-key
