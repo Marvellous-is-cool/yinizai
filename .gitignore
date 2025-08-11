@@ -1,0 +1,191 @@
+# ===========================================
+# Python
+# ===========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ===========================================
+# Virtual Environments
+# ===========================================
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# ===========================================
+# Environment Variables & Secrets
+# ===========================================
+.env
+.env.*
+!.env.example
+!.env.production
+*.pem
+*.key
+secrets.json
+config/local.json
+
+# ===========================================
+# Database & Data Files
+# ===========================================
+*.db
+*.sqlite
+*.sqlite3
+data/raw/
+data/processed/
+data/external/
+*.csv
+*.json
+!sample_data.json
+*.xlsx
+*.xls
+
+# ===========================================
+# Machine Learning & Models
+# ===========================================
+trained_models/
+*.pkl
+*.pickle
+*.joblib
+*.h5
+*.model
+*.pt
+*.pth
+*.onnx
+checkpoints/
+logs/
+tensorboard/
+wandb/
+mlruns/
+.neptune/
+
+# ===========================================
+# IDE & Editor Files
+# ===========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===========================================
+# Testing & Coverage
+# ===========================================
+.coverage
+.pytest_cache/
+.tox/
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# ===========================================
+# Documentation
+# ===========================================
+docs/_build/
+site/
+.readthedocs.yml
+
+# ===========================================
+# Jupyter Notebooks
+# ===========================================
+.ipynb_checkpoints/
+*.ipynb
+!example_notebook.ipynb
+
+# ===========================================
+# Docker
+# ===========================================
+.dockerignore
+docker-compose.override.yml
+
+# ===========================================
+# Logs
+# ===========================================
+*.log
+logs/
+*.out
+*.err
+
+# ===========================================
+# System Files
+# ===========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ===========================================
+# Node.js (for any frontend integration)
+# ===========================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn
+
+# ===========================================
+# Temporary Files
+# ===========================================
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# ===========================================
+# Render & Deployment
+# ===========================================
+.render/
+
+# ===========================================
+# Specific to this project
+# ===========================================
+# Keep sample data but ignore real data
+personal-test-results.json
+test-results/
+performance_data/
+
+# Keep documentation but ignore generated reports
+reports/
+analysis_output/
+
+# ML Service specific
+ml_service/data/real/
+ml_service/trained_models/*.pkl
+ml_service/trained_models/*.joblib
+ml_service/models/cache/
+
+# Keep configuration templates
+!ml_service/.env.example
+!ml_service/.env.production

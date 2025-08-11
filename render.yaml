@@ -1,0 +1,31 @@
+# This file tells Render how to deploy your service
+# Place this in your repository root (not ml_service folder)
+
+services:
+  - type: web
+    name: yinizai-ml-service
+    env: python
+    region: oregon # Choose: oregon, frankfurt, singapore
+    buildCommand: cd ml_service && bash build.sh
+    startCommand: cd ml_service && bash start_production.sh
+    plan: starter # Free tier
+    branch: main
+    healthCheckPath: /health
+    autoDeploy: true
+
+    # Environment variables (also set in Render dashboard)
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: PORT
+        value: 10000
+      - key: LOG_LEVEL
+        value: info
+      - key: MIN_TRAINING_SAMPLES
+        value: 10
+
+    # Resource limits
+    disk:
+      name: yinizai-ml-disk
+      size: 1
+      type: ssd

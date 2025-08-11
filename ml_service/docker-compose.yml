@@ -1,0 +1,46 @@
+version: "3.8"
+
+services:
+  ml-service:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=yinizai_user
+      - DB_PASSWORD=yinizai_password
+      - DB_NAME=yinizai_db
+      - API_PORT=8000
+      - API_HOST=0.0.0.0
+    depends_on:
+      - mysql
+    volumes:
+      - ./trained_models:/app/trained_models
+      - ./data:/app/data
+    restart: unless-stopped
+    networks:
+      - yinizai-network
+
+  mysql:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=yinizai_db
+      - MYSQL_USER=yinizai_user
+      - MYSQL_PASSWORD=yinizai_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    restart: unless-stopped
+    networks:
+      - yinizai-network
+
+volumes:
+  mysql_data:
+
+networks:
+  yinizai-network:
+    driver: bridge
