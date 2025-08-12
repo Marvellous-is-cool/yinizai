@@ -1,26 +1,30 @@
 # This file tells Render how to deploy your service
-# Place this in your repository root (not ml_service folder)
+# Optimized for FREE TIER (512MB RAM limit)
 
 services:
   - type: web
     name: yinizai-ml-service
     env: docker
     region: oregon # Choose: oregon, frankfurt, singapore
-    plan: starter # Free tier: free, Paid: starter ($7/mo)
+    plan: free # FREE TIER - 512MB RAM limit
     branch: main
     healthCheckPath: /health
     autoDeploy: true
 
-    # Environment variables (set these in Render dashboard with actual values)
+    # Environment variables optimized for free tier
     envVars:
       - key: ENVIRONMENT
         value: production
       - key: PORT
         value: 10000
       - key: LOG_LEVEL
-        value: info
+        value: warning  # Reduce logging to save memory
       - key: MIN_TRAINING_SAMPLES
-        value: 10
+        value: 5  # Reduce sample size for free tier
+      - key: WORKERS
+        value: 1  # Single worker to save memory
+      - key: MAX_REQUESTS
+        value: 50  # Limit requests per worker
       # Add these in Render dashboard:
       # - key: DB_HOST
       #   value: your-aiven-mysql-host

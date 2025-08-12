@@ -45,18 +45,27 @@ except Exception as e:
 
 echo "🚀 Starting FastAPI server..."
 
-# Use Gunicorn with Uvicorn workers for production
+# Optimize for free tier (512MB limit)
+# Use single worker to reduce memory footprint
+WORKERS=${WORKERS:-1}
+if [ "${RENDER}" = "true" ] && [ "${RENDER_SERVICE_TYPE}" = "web" ]; then
+    WORKERS=1  # Force single worker on Render free tier
+fi
+
+echo "  - Memory optimization: Using ${WORKERS} worker(s) for free tier"
+
+# Use Gunicorn with optimized settings for low memory
 exec gunicorn app.main:app \
     --bind 0.0.0.0:${PORT:-10000} \
-    --workers 2 \
+    --workers ${WORKERS} \
     --worker-class uvicorn.workers.UvicornWorker \
-    --worker-connections 1000 \
-    --max-requests 1000 \
-    --max-requests-jitter 50 \
+    --worker-connections 100 \
+    --max-requests 100 \
+    --max-requests-jitter 10 \
     --timeout 30 \
-    --keep-alive 5 \
+    --keep-alive 2 \
     --log-level ${LOG_LEVEL:-info} \
     --access-logfile - \
     --error-logfile - \
-    --capture-output \
-    --enable-stdio-inheritance
+    --preload-app \
+    --memory-limit 400

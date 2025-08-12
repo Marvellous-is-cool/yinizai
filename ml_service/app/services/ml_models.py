@@ -17,9 +17,24 @@ class MLModels:
         self.models = {}
         self.scalers = {}
         self.label_encoders = {}
+        self._model_cache = {}  # Lazy loading cache
         
         # Ensure model directory exists
         os.makedirs(model_path, exist_ok=True)
+    
+    def _get_model(self, model_name: str):
+        """Lazy load models to save memory"""
+        if model_name not in self._model_cache:
+            model_file = os.path.join(self.model_path, f"{model_name}_model.joblib")
+            if os.path.exists(model_file):
+                self._model_cache[model_name] = joblib.load(model_file)
+            else:
+                return None
+        return self._model_cache.get(model_name)
+    
+    def _clear_model_cache(self):
+        """Clear model cache to free memory"""
+        self._model_cache.clear()
     
     def train_difficulty_predictor(self, training_data: pd.DataFrame, target_column: str = 'difficulty_level') -> Dict[str, Any]:
         """

@@ -15,30 +15,43 @@ class FeatureEngineer:
         try:
             nltk.data.find('tokenizers/punkt')
         except LookupError:
-            nltk.download('punkt')
+            nltk.download('punkt', quiet=True)
         
         try:
             nltk.data.find('corpora/stopwords')
         except LookupError:
-            nltk.download('stopwords')
+            nltk.download('stopwords', quiet=True)
             
         try:
             nltk.data.find('vader_lexicon')
         except LookupError:
-            nltk.download('vader_lexicon')
+            nltk.download('vader_lexicon', quiet=True)
         
-        # Load spaCy model
-        try:
-            self.nlp = spacy.load('en_core_web_sm')
-        except OSError:
-            print("Please install spaCy English model: python -m spacy download en_core_web_sm")
-            self.nlp = None
+        # Use lazy loading for spaCy model to save memory
+        self._nlp = None
         
+        # Initialize NLTK components
         from nltk.corpus import stopwords
         from nltk.sentiment.vader import SentimentIntensityAnalyzer
         
         self.stop_words = set(stopwords.words('english'))
         self.sentiment_analyzer = SentimentIntensityAnalyzer()
+    
+    @property
+    def nlp(self):
+        """Lazy load spaCy model"""
+        if self._nlp is None:
+            try:
+                # Try smaller model first for memory efficiency
+                self._nlp = spacy.load("en_core_web_sm", disable=["parser", "ner", "textcat"])
+            except OSError:
+                # Fallback to basic English model
+                try:
+                    import spacy.lang.en
+                    self._nlp = spacy.lang.en.English()
+                except:
+                    self._nlp = None
+        return self._nlp
     
     def extract_text_features(self, text: str) -> Dict[str, float]:
         """Extract various text features from a given text"""
