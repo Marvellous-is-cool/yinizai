@@ -43,15 +43,17 @@ class FeatureEngineer:
         if self._nlp is None:
             try:
                 # Try smaller model first for memory efficiency
+                import spacy
                 self._nlp = spacy.load("en_core_web_sm", disable=["parser", "ner", "textcat"])
-            except OSError:
+            except (OSError, ImportError) as e:
                 # Fallback to basic English model
                 try:
                     import spacy.lang.en
                     self._nlp = spacy.lang.en.English()
-                except:
-                    self._nlp = None
-        return self._nlp
+                except (ImportError, Exception):
+                    # If spaCy completely fails, disable NLP features
+                    self._nlp = False  # Use False to indicate failed loading
+        return self._nlp if self._nlp is not False else None
     
     def extract_text_features(self, text: str) -> Dict[str, float]:
         """Extract various text features from a given text"""
@@ -100,13 +102,29 @@ class FeatureEngineer:
         features['sentiment_compound'] = sentiment_scores['compound']
         
         # spaCy features (if available)
-        if self.nlp:
-            doc = self.nlp(text)
-            features['noun_count'] = len([token for token in doc if token.pos_ == 'NOUN'])
-            features['verb_count'] = len([token for token in doc if token.pos_ == 'VERB'])
-            features['adj_count'] = len([token for token in doc if token.pos_ == 'ADJ'])
-            features['adv_count'] = len([token for token in doc if token.pos_ == 'ADV'])
-            features['entity_count'] = len(doc.ents)
+        try:
+            nlp_model = self.nlp
+            if nlp_model is not None:
+                doc = nlp_model(text)  # type: ignore
+                features['noun_count'] = len([token for token in doc if token.pos_ == 'NOUN'])
+                features['verb_count'] = len([token for token in doc if token.pos_ == 'VERB'])
+                features['adj_count'] = len([token for token in doc if token.pos_ == 'ADJ'])
+                features['adv_count'] = len([token for token in doc if token.pos_ == 'ADV'])
+                features['entity_count'] = len(doc.ents)
+            else:
+                # Fallback values when spaCy is not available
+                features['noun_count'] = 0
+                features['verb_count'] = 0
+                features['adj_count'] = 0
+                features['adv_count'] = 0
+                features['entity_count'] = 0
+        except Exception as e:
+            # Safe fallback if spaCy fails
+            features['noun_count'] = 0
+            features['verb_count'] = 0
+            features['adj_count'] = 0
+            features['adv_count'] = 0
+            features['entity_count'] = 0
         
         return features
     
