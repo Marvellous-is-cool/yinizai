@@ -13,8 +13,8 @@ export PYTHONDONTWRITEBYTECODE=1
 echo "📊 Service Configuration:"
 echo "  - Environment: ${ENVIRONMENT:-production}"
 echo "  - Port: ${PORT:-10000}"
-echo "  - Workers: 2"
-echo "  - Log Level: ${LOG_LEVEL:-info}"
+echo "  - Workers: ${WORKERS:-1}"
+echo "  - Log Level: ${LOG_LEVEL:-warning}"
 echo "  - Database: ${DB_HOST:-not-configured}"
 
 # Health check before starting
@@ -25,13 +25,22 @@ print(f'Python version: {sys.version}')
 
 # Test critical imports
 try:
-    import fastapi, uvicorn, sqlalchemy
+    import fastapi
+    print('✅ FastAPI OK')
+    import uvicorn  
+    print('✅ Uvicorn OK')
+    import sqlalchemy
+    print('✅ SQLAlchemy OK')
+    import pandas
+    print('✅ Pandas OK')
+    import sklearn
+    print('✅ Scikit-learn OK')
     print('✅ Core dependencies OK')
 except ImportError as e:
     print(f'❌ Import error: {e}')
     sys.exit(1)
 
-# Test database connection
+# Test database connection (optional - don't fail if DB not ready)
 try:
     from app.models.database import engine
     from sqlalchemy import text

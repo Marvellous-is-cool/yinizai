@@ -18,7 +18,6 @@ COPY ml_service/requirements.txt ./
 
 # Install Python dependencies with optimizations
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir --no-deps -r requirements.txt || \
     pip install --no-cache-dir -r requirements.txt
 
 # Download only essential NLTK data (reduce memory usage)
