@@ -73,8 +73,6 @@ exec gunicorn app.main:app \
     --max-requests-jitter 10 \
     --timeout 30 \
     --keep-alive 2 \
-    --log-level ${LOG_LEVEL:-info} \
+    --log-level ${LOG_LEVEL:-warning} \
     --access-logfile - \
-    --error-logfile - \
-    --preload-app \
-    --memory-limit 400
+    --error-logfile -
