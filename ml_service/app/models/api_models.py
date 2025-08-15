@@ -154,3 +154,28 @@ class ModelExplanation(BaseModel):
     feature_contributions: List[FeatureImportance]
     confidence: float
     explanation: str
+
+# Student Performance Analytics Models
+class QuestionDifficultyAnalysis(BaseModel):
+    question_id: int
+    question_text: str
+    subject: str
+    calculated_difficulty: str  # easy, medium, hard
+    difficulty_score: float  # 0-1 scale where 1 is hardest
+    confidence: float
+    performance_metrics: Dict[str, float]
+    student_statistics: Dict[str, int]
+    recommendations: List[str]
+
+class StudentPerformanceAnalysisRequest(BaseModel):
+    subject_filter: Optional[str] = None
+    min_attempts: Optional[int] = 5
+    include_recent_only: Optional[bool] = False
+    days_back: Optional[int] = 30
+
+class QuestionDifficultyAnalysisResponse(BaseModel):
+    total_questions_analyzed: int
+    analysis_summary: Dict[str, int]  # difficulty distribution
+    questions: List[QuestionDifficultyAnalysis]
+    overall_insights: List[str]
+    analysis_timestamp: datetime

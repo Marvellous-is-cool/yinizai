@@ -1,14 +1,15 @@
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 import pandas as pd
 import numpy as np
-from datetime import datetime
-from typing import List, Dict, Any
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional
 import logging
 import os
 
-from app.models.database import get_db, Base, engine
+from app.models.database import get_db, Base, engine, Question, StudentAnswer
 from app.models.api_models import *
 from app.services.feature_engineering import FeatureEngineer
 from app.services.ml_models import MLModels
@@ -372,6 +373,256 @@ async def batch_analyze_questions(request: BatchAnalysisRequest, db: Session = D
     except Exception as e:
         logger.error(f"Error in batch question analysis: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error in batch analysis: {str(e)}")
+
+@app.post("/analytics/questions/difficulty", response_model=QuestionDifficultyAnalysisResponse)
+async def analyze_all_questions_difficulty(
+    request: StudentPerformanceAnalysisRequest, 
+    db: Session = Depends(get_db)
+):
+    """
+    Analyze all questions to determine difficulty based on student performance data.
+    This endpoint uses ML to evaluate student scores and determine if questions are easy, medium, or hard.
+    """
+    try:
+        data_processor = DataProcessor(db)
+        
+        # Get questions with sufficient student data
+        min_attempts = request.min_attempts or 5
+        
+        # Filter by subject if specified
+        base_query = db.query(
+            Question.id,
+            Question.question_text,
+            Question.question_type,
+            Question.subject,
+            Question.correct_answer,
+            Question.points,
+            func.count(StudentAnswer.id).label('total_attempts'),
+            func.avg(StudentAnswer.score / StudentAnswer.max_score).label('avg_score_ratio'),
+            func.stddev(StudentAnswer.score / StudentAnswer.max_score).label('score_std'),
+            func.avg(StudentAnswer.time_taken).label('avg_time'),
+            func.stddev(StudentAnswer.time_taken).label('time_std'),
+            func.count(func.distinct(StudentAnswer.student_id)).label('unique_students'),
+            func.min(StudentAnswer.score / StudentAnswer.max_score).label('min_score'),
+            func.max(StudentAnswer.score / StudentAnswer.max_score).label('max_score'),
+            func.sum(func.case([(StudentAnswer.score / StudentAnswer.max_score >= 0.7, 1)], else_=0)).label('high_scores'),
+            func.sum(func.case([(StudentAnswer.score / StudentAnswer.max_score < 0.5, 1)], else_=0)).label('low_scores')
+        ).join(StudentAnswer, Question.id == StudentAnswer.question_id)
+        
+        # Apply filters
+        if request.subject_filter:
+            base_query = base_query.filter(Question.subject == request.subject_filter)
+        
+        if request.include_recent_only:
+            days_back = request.days_back or 30
+            cutoff_date = datetime.utcnow() - timedelta(days=days_back)
+            base_query = base_query.filter(StudentAnswer.created_at >= cutoff_date)
+        
+        questions_with_stats = base_query.group_by(Question.id)\
+            .having(func.count(StudentAnswer.id) >= min_attempts)\
+            .all()
+        
+        if not questions_with_stats:
+            return QuestionDifficultyAnalysisResponse(
+                total_questions_analyzed=0,
+                analysis_summary={'easy': 0, 'medium': 0, 'hard': 0},
+                questions=[],
+                overall_insights=["No questions found with sufficient student data"],
+                analysis_timestamp=datetime.utcnow()
+            )
+        
+        # Analyze each question
+        analyzed_questions = []
+        difficulty_counts = {'easy': 0, 'medium': 0, 'hard': 0}
+        
+        for q in questions_with_stats:
+            # Calculate performance metrics
+            avg_score = float(q.avg_score_ratio) if q.avg_score_ratio else 0
+            score_std = float(q.score_std) if q.score_std else 0
+            avg_time = float(q.avg_time) if q.avg_time else 0
+            total_attempts = q.total_attempts
+            unique_students = q.unique_students
+            high_scores = q.high_scores or 0
+            low_scores = q.low_scores or 0
+            
+            # Calculate advanced difficulty metrics
+            pass_rate = avg_score
+            consistency = 1 - min(score_std, 1.0)  # Higher consistency = more reliable difficulty
+            completion_efficiency = high_scores / total_attempts if total_attempts > 0 else 0
+            struggle_rate = low_scores / total_attempts if total_attempts > 0 else 0
+            
+            # Determine difficulty using multiple factors
+            difficulty_score = 0.0
+            
+            # Primary factor: average performance (40% weight)
+            if avg_score >= 0.8:
+                difficulty_score += 0.1  # Easy
+            elif avg_score >= 0.6:
+                difficulty_score += 0.4  # Medium-Easy
+            elif avg_score >= 0.4:
+                difficulty_score += 0.7  # Medium-Hard
+            else:
+                difficulty_score += 1.0  # Hard
+            
+            # Secondary factor: consistency (20% weight)
+            if score_std > 0.4:  # High variance suggests confusing/ambiguous
+                difficulty_score += 0.2
+            
+            # Tertiary factor: struggle rate (20% weight)
+            difficulty_score += (struggle_rate * 0.2)
+            
+            # Quaternary factor: time factor (20% weight)
+            if avg_time > 300:  # More than 5 minutes suggests complexity
+                difficulty_score += 0.2
+            
+            # Normalize difficulty score (0-1 scale)
+            difficulty_score = min(difficulty_score, 1.0)
+            
+            # Categorize difficulty
+            if difficulty_score <= 0.3:
+                calculated_difficulty = 'easy'
+                confidence = 1 - difficulty_score
+            elif difficulty_score <= 0.7:
+                calculated_difficulty = 'medium'
+                confidence = 1 - abs(0.5 - difficulty_score)
+            else:
+                calculated_difficulty = 'hard'
+                confidence = difficulty_score
+            
+            # Generate recommendations
+            recommendations = []
+            if calculated_difficulty == 'hard' and avg_score < 0.4:
+                recommendations.append("Consider providing additional study materials")
+                recommendations.append("Review question clarity and instructions")
+            elif calculated_difficulty == 'easy' and avg_score > 0.9:
+                recommendations.append("Consider increasing question complexity")
+                recommendations.append("Add follow-up challenging questions")
+            elif score_std > 0.4:
+                recommendations.append("Question may be ambiguous - review wording")
+                recommendations.append("Provide clearer examples or context")
+            
+            if struggle_rate > 0.3:
+                recommendations.append("High struggle rate - consider prerequisite topics review")
+            
+            if avg_time > 600:  # More than 10 minutes
+                recommendations.append("Question may be too time-consuming - consider breaking into parts")
+            
+            # Create analysis object
+            question_analysis = QuestionDifficultyAnalysis(
+                question_id=q.id,
+                question_text=q.question_text[:200] + "..." if len(q.question_text) > 200 else q.question_text,
+                subject=q.subject or "Unknown",
+                calculated_difficulty=calculated_difficulty,
+                difficulty_score=round(difficulty_score, 3),
+                confidence=round(confidence, 3),
+                performance_metrics={
+                    'avg_score': round(avg_score, 3),
+                    'pass_rate': round(pass_rate, 3),
+                    'score_std': round(score_std, 3),
+                    'avg_time_minutes': round(avg_time / 60, 2),
+                    'completion_efficiency': round(completion_efficiency, 3),
+                    'struggle_rate': round(struggle_rate, 3),
+                    'consistency': round(consistency, 3)
+                },
+                student_statistics={
+                    'total_attempts': total_attempts,
+                    'unique_students': unique_students,
+                    'high_performers': high_scores,
+                    'struggling_students': low_scores
+                },
+                recommendations=recommendations
+            )
+            
+            analyzed_questions.append(question_analysis)
+            difficulty_counts[calculated_difficulty] += 1
+        
+        # Generate overall insights
+        overall_insights = []
+        total_analyzed = len(analyzed_questions)
+        
+        if difficulty_counts['hard'] / total_analyzed > 0.4:
+            overall_insights.append("High proportion of difficult questions detected - consider curriculum review")
+        
+        if difficulty_counts['easy'] / total_analyzed > 0.5:
+            overall_insights.append("Many questions are too easy - consider increasing overall difficulty")
+        
+        if difficulty_counts['medium'] / total_analyzed > 0.6:
+            overall_insights.append("Good balance of moderate difficulty questions")
+        
+        # Add subject-specific insights if filtered
+        if request.subject_filter:
+            subject_avg_difficulty = sum(q.difficulty_score for q in analyzed_questions) / len(analyzed_questions)
+            if subject_avg_difficulty > 0.7:
+                overall_insights.append(f"{request.subject_filter} appears to be a challenging subject area")
+            elif subject_avg_difficulty < 0.3:
+                overall_insights.append(f"{request.subject_filter} questions may need more complexity")
+        
+        return QuestionDifficultyAnalysisResponse(
+            total_questions_analyzed=total_analyzed,
+            analysis_summary=difficulty_counts,
+            questions=analyzed_questions,
+            overall_insights=overall_insights,
+            analysis_timestamp=datetime.utcnow()
+        )
+    
+    except Exception as e:
+        logger.error(f"Error in question difficulty analysis: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error analyzing question difficulty: {str(e)}")
+
+@app.get("/analytics/questions/difficulty/summary")
+async def get_question_difficulty_summary(
+    subject: Optional[str] = None,
+    min_attempts: int = 3,
+    db: Session = Depends(get_db)
+):
+    """
+    Get a quick summary of question difficulty distribution.
+    This is a faster endpoint for getting overview statistics.
+    """
+    try:
+        # Quick query for summary statistics
+        base_query = db.query(
+            Question.subject,
+            func.count(Question.id).label('total_questions'),
+            func.avg(func.coalesce(
+                (func.count(StudentAnswer.id) * func.avg(StudentAnswer.score / StudentAnswer.max_score)), 0
+            )).label('avg_performance')
+        ).outerjoin(StudentAnswer, Question.id == StudentAnswer.question_id)
+        
+        if subject:
+            base_query = base_query.filter(Question.subject == subject)
+        
+        results = base_query.group_by(Question.subject).all()
+        
+        summary = {}
+        for result in results:
+            subject_name = result.subject or "Unknown"
+            avg_performance = float(result.avg_performance) if result.avg_performance else 0
+            
+            # Simple difficulty classification
+            if avg_performance >= 0.7:
+                difficulty = "easy"
+            elif avg_performance >= 0.4:
+                difficulty = "medium"
+            else:
+                difficulty = "hard"
+            
+            summary[subject_name] = {
+                "total_questions": result.total_questions,
+                "estimated_difficulty": difficulty,
+                "avg_performance": round(avg_performance, 3)
+            }
+        
+        return {
+            "summary": summary,
+            "total_subjects": len(summary),
+            "analysis_note": "Quick summary based on average student performance",
+            "for_detailed_analysis": "Use POST /analytics/questions/difficulty"
+        }
+    
+    except Exception as e:
+        logger.error(f"Error in difficulty summary: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting difficulty summary: {str(e)}")
 
 @app.post("/setup/initialize")
 async def initialize_deployment(db: Session = Depends(get_db)):
