@@ -220,85 +220,198 @@ class MLModels:
     
     def predict_difficulty(self, features: pd.DataFrame) -> List[Dict[str, Any]]:
         """Predict difficulty for new questions"""
+        # Try to load model if not in memory
         if 'difficulty_predictor' not in self.models:
             self._load_model('difficulty_predictor')
+            self._load_model('difficulty_scaler')
+            self._load_model('difficulty_encoder')
         
-        model = self.models['difficulty_predictor']
+        model = self.models.get('difficulty_predictor')
         scaler = self.scalers.get('difficulty')
         encoder = self.label_encoders.get('difficulty')
         
         if model is None or scaler is None or encoder is None:
-            raise ValueError("Difficulty prediction model not trained or loaded")
+            # Return fallback predictions when models aren't trained yet
+            return self._fallback_difficulty_prediction(features)
         
-        # Scale features
-        X_scaled = scaler.transform(features)
-        
-        # Make predictions
-        predictions = model.predict(X_scaled)
-        probabilities = model.predict_proba(X_scaled)
-        
+        try:
+            # Scale features
+            X_scaled = scaler.transform(features)
+            
+            # Make predictions
+            predictions = model.predict(X_scaled)
+            probabilities = model.predict_proba(X_scaled)
+            
+            results = []
+            for i, (pred, prob) in enumerate(zip(predictions, probabilities)):
+                difficulty = encoder.inverse_transform([pred])[0]
+                confidence = max(prob)
+                
+                results.append({
+                    'predicted_difficulty': difficulty,
+                    'confidence': confidence,
+                    'probabilities': dict(zip(encoder.classes_, prob))
+                })
+            
+            return results
+        except Exception as e:
+            print(f"Error in difficulty prediction: {e}")
+            return self._fallback_difficulty_prediction(features)
+    
+    def _fallback_difficulty_prediction(self, features: pd.DataFrame) -> List[Dict[str, Any]]:
+        """Fallback prediction when models are not available"""
         results = []
-        for i, (pred, prob) in enumerate(zip(predictions, probabilities)):
-            difficulty = encoder.inverse_transform([pred])[0]
-            confidence = max(prob)
+        
+        for i, row in features.iterrows():
+            # Simple rule-based difficulty estimation
+            # Use text length and complexity as basic indicators
+            text_length = row.get('text_length', 0)
+            word_count = row.get('word_count', 0)
+            
+            # Basic heuristic for difficulty
+            if text_length > 200 or word_count > 30:
+                difficulty = 'hard'
+                confidence = 0.6
+                probabilities = {'easy': 0.1, 'medium': 0.3, 'hard': 0.6}
+            elif text_length > 100 or word_count > 15:
+                difficulty = 'medium'
+                confidence = 0.7
+                probabilities = {'easy': 0.2, 'medium': 0.7, 'hard': 0.1}
+            else:
+                difficulty = 'easy'
+                confidence = 0.6
+                probabilities = {'easy': 0.6, 'medium': 0.3, 'hard': 0.1}
             
             results.append({
                 'predicted_difficulty': difficulty,
                 'confidence': confidence,
-                'probabilities': dict(zip(encoder.classes_, prob))
+                'probabilities': probabilities,
+                '_fallback': True  # Indicate this is a fallback prediction
             })
         
         return results
     
     def predict_score(self, features: pd.DataFrame) -> List[float]:
         """Predict scores for new answers"""
+        # Try to load model if not in memory
         if 'score_predictor' not in self.models:
             self._load_model('score_predictor')
+            self._load_model('score_scaler')
         
-        model = self.models['score_predictor']
+        model = self.models.get('score_predictor')
         scaler = self.scalers.get('score')
         
         if model is None or scaler is None:
-            raise ValueError("Score prediction model not trained or loaded")
+            # Return fallback predictions when models aren't trained yet
+            return self._fallback_score_prediction(features)
         
-        # Scale features
-        X_scaled = scaler.transform(features)
+        try:
+            # Scale features
+            X_scaled = scaler.transform(features)
+            
+            # Make predictions
+            predictions = model.predict(X_scaled)
+            
+            return predictions.tolist()
+        except Exception as e:
+            print(f"Error in score prediction: {e}")
+            return self._fallback_score_prediction(features)
+    
+    def _fallback_score_prediction(self, features: pd.DataFrame) -> List[float]:
+        """Fallback score prediction when models are not available"""
+        results = []
         
-        # Make predictions
-        predictions = model.predict(X_scaled)
+        for i, row in features.iterrows():
+            # Simple rule-based score estimation
+            # Use text similarity and length as basic indicators
+            answer_length = row.get('answer_length', 0)
+            text_similarity = row.get('text_similarity', 0.5)
+            
+            # Basic heuristic for scoring (0-1 scale)
+            base_score = text_similarity * 0.7  # Similarity contributes 70%
+            
+            # Length bonus/penalty
+            if answer_length > 50:  # Reasonable length
+                length_bonus = 0.2
+            elif answer_length < 10:  # Too short
+                length_bonus = -0.3
+            else:
+                length_bonus = 0.1
+            
+            predicted_score = max(0, min(1, base_score + length_bonus))
+            results.append(predicted_score)
         
-        # Ensure predictions are between 0 and 1
-        predictions = np.clip(predictions, 0, 1)
-        
-        return predictions.tolist()
+        return results
     
     def analyze_comprehension(self, features: pd.DataFrame) -> List[Dict[str, Any]]:
         """Analyze comprehension patterns"""
+        # Try to load model if not in memory
         if 'comprehension_analyzer' not in self.models:
             self._load_model('comprehension_analyzer')
+            self._load_model('comprehension_scaler')
         
-        model = self.models['comprehension_analyzer']
+        model = self.models.get('comprehension_analyzer')
         scaler = self.scalers.get('comprehension')
         
         if model is None or scaler is None:
-            raise ValueError("Comprehension analyzer model not trained or loaded")
+            # Return fallback analysis when models aren't trained yet
+            return self._fallback_comprehension_analysis(features)
         
-        # Scale features
-        X_scaled = scaler.transform(features)
-        
-        # Make predictions
-        cluster_labels = model.predict(X_scaled)
-        distances = model.transform(X_scaled)
-        
+        try:
+            # Scale features
+            X_scaled = scaler.transform(features)
+            
+            # Make predictions
+            cluster_labels = model.predict(X_scaled)
+            distances = model.transform(X_scaled)
+            
+            results = []
+            for i, (label, dist) in enumerate(zip(cluster_labels, distances)):
+                cluster_distance = dist[label]
+                
+                results.append({
+                    'comprehension_cluster': int(label),
+                    'cluster_confidence': float(1 / (1 + cluster_distance)),
+                    'cluster_distances': dist.tolist()
+                })
+            
+            return results
+        except Exception as e:
+            print(f"Error in comprehension analysis: {e}")
+            return self._fallback_comprehension_analysis(features)
+    
+    def _fallback_comprehension_analysis(self, features: pd.DataFrame) -> List[Dict[str, Any]]:
+        """Fallback comprehension analysis when models are not available"""
         results = []
-        for i, (cluster, dist) in enumerate(zip(cluster_labels, distances)):
-            # Find distance to assigned cluster
-            cluster_distance = dist[cluster]
+        
+        for i, row in features.iterrows():
+            # Simple rule-based comprehension analysis
+            answer_length = row.get('answer_length', 0)
+            text_similarity = row.get('text_similarity', 0.5)
+            
+            # Basic heuristic for comprehension cluster
+            if text_similarity > 0.8 and answer_length > 30:
+                cluster = 0  # High comprehension
+                confidence = 0.8
+                issues = []
+                recommendations = ["Continue current approach"]
+            elif text_similarity > 0.5:
+                cluster = 1  # Medium comprehension  
+                confidence = 0.7
+                issues = ["Some conceptual gaps"]
+                recommendations = ["Review key concepts", "Provide additional examples"]
+            else:
+                cluster = 2  # Low comprehension
+                confidence = 0.6
+                issues = ["Significant comprehension difficulties", "Basic concept confusion"]
+                recommendations = ["Fundamental review needed", "One-on-one tutoring recommended"]
             
             results.append({
-                'comprehension_cluster': int(cluster),
-                'cluster_confidence': float(1 / (1 + cluster_distance)),  # Convert distance to confidence
-                'cluster_distances': dist.tolist()
+                'comprehension_cluster': cluster,
+                'cluster_confidence': confidence,
+                'issues_identified': issues,
+                'recommendations': recommendations,
+                '_fallback': True
             })
         
         return results

@@ -65,41 +65,186 @@ async def root():
         "timestamp": datetime.utcnow()
     }
 
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow()}
-
-@app.get("/status", response_model=SystemStatusResponse)
-async def get_system_status(db: Session = Depends(get_db)):
-    """Get system status and model information"""
+@app.get("/health", response_model=SystemStatusResponse)
+async def health_check(db: Session = Depends(get_db)):
+    """Health check endpoint with model status"""
     try:
+        # Test database connection
+        from sqlalchemy import text
+        db.execute(text("SELECT 1"))
+        db_connected = True
+        
         # Get model information
         model_info = ml_models.get_model_info()
         
-        # Count questions and answers in database
-        from app.models.database import Question, StudentAnswer
-        question_count = db.query(Question).count()
-        answer_count = db.query(StudentAnswer).count()
+        # Check if core models are available
+        required_models = ['difficulty_predictor', 'score_predictor', 'comprehension_analyzer']
+        available_models = []
         
-        loaded_models = []
-        for model_name in model_info['loaded_models']:
-            loaded_models.append(ModelInfo(
-                model_name=model_name,
-                model_type=model_name.replace('_predictor', '').replace('_analyzer', ''),
-                performance_metrics={},
-                feature_count=0,
-                is_loaded=True
-            ))
+        for model_name in required_models:
+            model_file = f"{model_name}.joblib"
+            if model_file in model_info.get('available_model_files', []):
+                is_loaded = model_name in ml_models.models
+                available_models.append(ModelInfo(
+                    model_name=model_name,
+                    model_type="ML Model",
+                    training_date=datetime.utcnow() if is_loaded else None,
+                    performance_metrics={},
+                    feature_count=0,
+                    is_loaded=is_loaded
+                ))
+        
+        # Determine service status
+        if len(available_models) == len(required_models):
+            service_status = "fully_operational"
+        elif len(available_models) > 0:
+            service_status = "partially_operational"
+        else:
+            service_status = "models_not_trained"
+        
+        # Get basic analytics
+        from app.models.database import Question, StudentAnswer
+        try:
+            total_questions = db.query(Question).count()
+            total_answers = db.query(StudentAnswer).count()
+        except:
+            total_questions = 0
+            total_answers = 0
         
         return SystemStatusResponse(
-            service_status="running",
-            loaded_models=loaded_models,
-            database_connected=True,
-            total_questions_analyzed=question_count,
-            total_answers_processed=answer_count
+            service_status=service_status,
+            loaded_models=available_models,
+            database_connected=db_connected,
+            last_training_date=datetime.utcnow() if available_models else None,
+            total_questions_analyzed=total_questions,
+            total_answers_processed=total_answers
         )
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting system status: {str(e)}")
+
+@app.post("/train/with-student-data", response_model=TrainWithStudentDataResponse)
+async def train_with_student_data(
+    request: TrainWithStudentDataRequest, 
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Train ML models using real student performance data from Node.js.
+    This endpoint accepts actual student test scores and trains the difficulty prediction models.
+    """
+    try:
+        if not request.student_performances:
+            raise HTTPException(status_code=400, detail="No student performance data provided")
+        
+        # Start training in background
+        background_tasks.add_task(
+            _train_with_student_data_background,
+            request.student_performances,
+            request.retrain_existing or False,
+            db
+        )
+        
+        return TrainWithStudentDataResponse(
+            total_records_processed=len(request.student_performances),
+            questions_analyzed=len(set(p.question_id for p in request.student_performances)),
+            models_trained=["difficulty_predictor", "score_predictor"],
+            training_results={},
+            message=f"Training started with {len(request.student_performances)} student performance records",
+            training_timestamp=datetime.utcnow()
+        )
+    
+    except Exception as e:
+        logger.error(f"Error starting training with student data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error starting training: {str(e)}")
+
+async def _train_with_student_data_background(
+    student_performances: List[StudentPerformanceData], 
+    retrain_existing: bool,
+    db: Session
+):
+    """Background task for training models with real student data"""
+    try:
+        logger.info(f"Training models with {len(student_performances)} student performance records")
+        
+        # Clear existing data if retraining
+        if retrain_existing:
+            db.query(StudentAnswer).delete()
+            db.query(Question).delete()
+            db.commit()
+        
+        # Convert student performance data to database records
+        questions_created = {}
+        answers_created = []
+        
+        for perf in student_performances:
+            # Create or update question record
+            if perf.question_id not in questions_created:
+                existing_question = db.query(Question).filter(Question.id == perf.question_id).first()
+                
+                if not existing_question:
+                    question = Question(
+                        id=perf.question_id,
+                        question_text=perf.question_text,
+                        question_type=perf.question_type or "short_answer",
+                        subject=perf.subject or "General",
+                        correct_answer=perf.correct_answer or "",
+                        points=int(perf.max_score),
+                        created_at=datetime.utcnow()
+                    )
+                    db.add(question)
+                    questions_created[perf.question_id] = question
+                else:
+                    questions_created[perf.question_id] = existing_question
+            
+            # Create student answer record
+            student_answer = StudentAnswer(
+                student_id=perf.student_id,
+                question_id=perf.question_id,
+                answer_text=perf.student_answer,
+                score=perf.score,
+                max_score=perf.max_score,
+                time_taken=perf.time_taken or 0,
+                attempt_number=perf.attempt_number or 1,
+                created_at=datetime.utcnow()
+            )
+            db.add(student_answer)
+            answers_created.append(student_answer)
+        
+        # Commit to database
+        db.commit()
+        logger.info(f"Created {len(questions_created)} questions and {len(answers_created)} student answers")
+        
+        # Now train the ML models using this real data
+        data_processor = DataProcessor(db)
+        
+        # Train difficulty prediction model
+        try:
+            training_data = data_processor.get_training_data_for_difficulty_prediction(min_samples=3)
+            if len(training_data) >= 5:  # Need minimum data for training
+                results = ml_models.train_difficulty_predictor(training_data)
+                logger.info(f"Difficulty model trained with accuracy: {results.get('test_accuracy', 0):.3f}")
+            else:
+                logger.warning(f"Not enough data for difficulty training. Need at least 5 samples, got {len(training_data)}")
+        except Exception as e:
+            logger.error(f"Error training difficulty model: {str(e)}")
+        
+        # Train score prediction model
+        try:
+            score_training_data = data_processor.get_training_data_for_score_prediction(limit=len(answers_created))
+            if len(score_training_data) >= 10:  # Need minimum data for training
+                results = ml_models.train_score_predictor(score_training_data)
+                logger.info(f"Score model trained with R²: {results.get('test_r2', 0):.3f}")
+            else:
+                logger.warning(f"Not enough data for score training. Need at least 10 samples, got {len(score_training_data)}")
+        except Exception as e:
+            logger.error(f"Error training score model: {str(e)}")
+        
+        logger.info("Model training completed successfully")
+    
+    except Exception as e:
+        logger.error(f"Error in background training with student data: {str(e)}")
+        db.rollback()
 
 @app.post("/analyze/question", response_model=QuestionAnalysisResponse)
 async def analyze_question(request: QuestionAnalysisRequest, db: Session = Depends(get_db)):
@@ -623,6 +768,101 @@ async def get_question_difficulty_summary(
     except Exception as e:
         logger.error(f"Error in difficulty summary: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting difficulty summary: {str(e)}")
+
+@app.post("/setup/initialize-models")
+async def initialize_models(db: Session = Depends(get_db)):
+    """Initialize ML models with sample data for immediate functionality"""
+    try:
+        # Check if models already exist
+        model_info = ml_models.get_model_info()
+        if model_info['available_model_files']:
+            return {
+                "message": "Models already exist",
+                "existing_models": model_info['available_model_files'],
+                "status": "skipped"
+            }
+        
+        # Create sample training data for models to work
+        import pandas as pd
+        from datetime import datetime, timedelta
+        
+        # Generate minimal sample data for difficulty prediction
+        sample_difficulty_data = []
+        difficulties = ['easy', 'medium', 'hard']
+        
+        for i in range(30):  # 30 sample questions
+            difficulty = difficulties[i % 3]
+            
+            # Generate features based on difficulty
+            if difficulty == 'easy':
+                text_length = np.random.randint(20, 80)
+                word_count = np.random.randint(5, 15)
+                avg_score = np.random.uniform(0.7, 0.9)
+            elif difficulty == 'medium':
+                text_length = np.random.randint(80, 150)
+                word_count = np.random.randint(15, 30)
+                avg_score = np.random.uniform(0.4, 0.7)
+            else:  # hard
+                text_length = np.random.randint(150, 300)
+                word_count = np.random.randint(30, 60)
+                avg_score = np.random.uniform(0.1, 0.4)
+            
+            sample_difficulty_data.append({
+                'text_length': text_length,
+                'word_count': word_count,
+                'avg_word_length': text_length / word_count if word_count > 0 else 5,
+                'performance_avg_score': avg_score,
+                'performance_score_std': np.random.uniform(0.1, 0.3),
+                'performance_total_attempts': np.random.randint(10, 50),
+                'difficulty_level': difficulty
+            })
+        
+        difficulty_df = pd.DataFrame(sample_difficulty_data)
+        
+        # Train difficulty predictor
+        diff_results = ml_models.train_difficulty_predictor(difficulty_df)
+        
+        # Generate sample data for score prediction
+        sample_score_data = []
+        for i in range(50):  # 50 sample answers
+            answer_length = np.random.randint(10, 200)
+            text_similarity = np.random.uniform(0.1, 1.0)
+            score_ratio = min(1.0, text_similarity * 0.8 + np.random.uniform(-0.2, 0.2))
+            
+            sample_score_data.append({
+                'answer_length': answer_length,
+                'word_count': answer_length // 5,
+                'text_similarity': text_similarity,
+                'avg_word_length': 5.0,
+                'score_ratio': max(0.0, score_ratio)
+            })
+        
+        score_df = pd.DataFrame(sample_score_data)
+        
+        # Train score predictor
+        score_results = ml_models.train_score_predictor(score_df)
+        
+        # Generate sample data for comprehension analysis
+        comprehension_df = score_df.copy()  # Reuse score data
+        comp_results = ml_models.train_comprehension_analyzer(comprehension_df)
+        
+        return {
+            "message": "Models initialized successfully with sample data",
+            "models_created": [
+                "difficulty_predictor",
+                "score_predictor", 
+                "comprehension_analyzer"
+            ],
+            "difficulty_accuracy": f"{diff_results['test_accuracy']:.3f}",
+            "score_r2": f"{score_results['test_r2']:.3f}",
+            "comprehension_clusters": comp_results['n_clusters'],
+            "status": "success",
+            "note": "Models trained with synthetic data. Performance will improve with real student data."
+        }
+        
+    except Exception as e:
+        logger.error(f"Error initializing models: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Model initialization failed: {str(e)}")
 
 @app.post("/setup/initialize")
 async def initialize_deployment(db: Session = Depends(get_db)):

@@ -156,6 +156,31 @@ class ModelExplanation(BaseModel):
     explanation: str
 
 # Student Performance Analytics Models
+class StudentPerformanceData(BaseModel):
+    student_id: int
+    question_id: int
+    question_text: str
+    question_type: Optional[str] = None
+    subject: Optional[str] = None
+    correct_answer: Optional[str] = None
+    student_answer: str
+    score: float
+    max_score: float
+    time_taken: Optional[int] = None  # in seconds
+    attempt_number: Optional[int] = 1
+
+class TrainWithStudentDataRequest(BaseModel):
+    student_performances: List[StudentPerformanceData]
+    retrain_existing: Optional[bool] = False
+
+class TrainWithStudentDataResponse(BaseModel):
+    total_records_processed: int
+    questions_analyzed: int
+    models_trained: List[str]
+    training_results: Dict[str, Any]
+    message: str
+    training_timestamp: datetime
+
 class QuestionDifficultyAnalysis(BaseModel):
     question_id: int
     question_text: str
